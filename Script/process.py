@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from skimage.measure import label, regionprops
 from sklearn.cluster import KMeans
 from scipy.linalg import svd
-from getMarkerPosition import getWorldPos
+from getMarkerPosition import getWorldPos, Tras2lps
 
 
 def sort(points: np.ndarray):
@@ -118,7 +118,10 @@ if __name__ == '__main__':
     K, R, C, _, _, _, _ = cv2.decomposeProjectionMatrix(projectMatrix)
     C /= C[3, 0]
     C = C.reshape(-1)[:3]
-    cameraPosition = np.array([-73.83789062, 614.16210938, 530.])
+    cameraPosition = np.array([-73.83789062, 614.16210938, 530., 1])
+    cameraPosition = Tras2lps @ cameraPosition.reshape(4, 1)
+    cameraPosition /= cameraPosition[3, 0]
+    cameraPosition = cameraPosition.reshape(-1)[:3]
     distance = np.linalg.norm(cameraPosition - C)
     print("CameraWorld:", C, " Distance:", distance)
     print(projectMatrix)

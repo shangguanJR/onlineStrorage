@@ -2,6 +2,7 @@ import h5py
 import argparse
 import numpy as np
 
+# RAS 坐标
 points = np.array([
     [84.88449, 77.48327, -45.37695],
     [54.9133, 77.47672, -45.42195],
@@ -41,6 +42,13 @@ points = np.array([
     [-64.9388, 227.34502, -44.80812],
 ])
 
+Tras2lps = np.array([
+    [-1, 0,  0, 21.6621],
+    [0, -1,  0, 209.6621],
+    [0,  0,  1, -466.5],
+    [0,  0,  0, 1],
+])
+
 
 def read_h5(fileName: str):
     with h5py.File(fileName, "r") as file:
@@ -63,7 +71,7 @@ def getWorldPos(transformFile):
     worldPos = np.zeros((36, 3))
     for i in range(36):
         point = points_homo[i].reshape(4, 1)
-        point = transform_matrix@point
+        point = Tras2lps@transform_matrix@point
         point /= point[3, 0]
         worldPos[i] = point.reshape(-1)[:3]
     return worldPos

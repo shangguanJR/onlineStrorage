@@ -180,7 +180,7 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   short pixel;
   int ctIndex[3];  // IJK index
 
-  Eigen::Vector4d firstIntersection = Eigen::Vector4d::Ones();
+  float firstIntersection[3];
   float alphaX1, alphaXN, alphaXmin, alphaXmax;
   float alphaY1, alphaYN, alphaYmin, alphaYmax;
   float alphaZ1, alphaZN, alphaZmin, alphaZmax;
@@ -189,8 +189,8 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   float alphaUx, alphaUy, alphaUz;
   float alphaIntersectionUp[3], alphaIntersectionDown[3];
   float d12, value;
-  Eigen::Vector4d firstIntersectionIndex;
-  Eigen::Vector4d firstIntersectionIndexUp, firstIntersectionIndexDown;
+  float firstIntersectionIndex[3];
+  int firstIntersectionIndexUp[3], firstIntersectionIndexDown[3];
   int iU, jU, kU;
 
   const short minOutputValue = VTK_SHORT_MIN;
@@ -210,8 +210,8 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   define  the  CT volume. */
   if (rayVector[0] != 0)
   {
-    alphaX1 = (ctBounds[0] - cameraCT[0]) / rayVector[0];
-    alphaXN = (ctBounds[1] - cameraCT[0]) / rayVector[0];
+    alphaX1 = (0.0 - cameraCT[0]) / rayVector[0];
+    alphaXN = (ctSize[0] * ctSpacing[0] - cameraCT[0]) / rayVector[0];
     alphaXmin = std::min(alphaX1, alphaXN);
     alphaXmax = std::max(alphaX1, alphaXN);
   }
@@ -222,8 +222,8 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   }
   if (rayVector[1] != 0)
   {
-    alphaY1 = (ctBounds[2] - cameraCT[1]) / rayVector[1];
-    alphaYN = (ctBounds[3] - cameraCT[1]) / rayVector[1];
+    alphaY1 = (0 - cameraCT[1]) / rayVector[1];
+    alphaYN = (ctSize[1] * ctSpacing[1] - cameraCT[1]) / rayVector[1];
     alphaYmin = std::min(alphaY1, alphaYN);
     alphaYmax = std::max(alphaY1, alphaYN);
   }
@@ -234,8 +234,8 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   }
   if (rayVector[2] != 0)
   {
-    alphaZ1 = (ctBounds[4] - cameraCT[2]) / rayVector[2];
-    alphaZN = (ctBounds[5] - cameraCT[2]) / rayVector[2];
+    alphaZ1 = (0 - cameraCT[2]) / rayVector[2];
+    alphaZN = (ctSize[2] * ctSpacing[2] - cameraCT[2]) / rayVector[2];
     alphaZmin = std::min(alphaZ1, alphaZN);
     alphaZmax = std::max(alphaZ1, alphaZN);
   }
@@ -258,64 +258,103 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   firstIntersection[2] = cameraCT[2] + alphaMin * rayVector[2];  // RAS坐标系下
 
   /* Transform LPS coordinate to the continuous index of the CT volume*/
-  firstIntersectionIndex = RASToIJK * firstIntersection;
+  firstIntersectionIndex[0] = firstIntersection[0] / ctSpacing[0];
+  firstIntersectionIndex[1] = firstIntersection[1] / ctSpacing[1];
+  firstIntersectionIndex[2] = firstIntersection[2] / ctSpacing[2];
 
-  firstIntersectionIndexUp[0] = ceil(firstIntersectionIndex[0]);
-  firstIntersectionIndexUp[1] = ceil(firstIntersectionIndex[1]);
-  firstIntersectionIndexUp[2] = ceil(firstIntersectionIndex[2]);
-  firstIntersectionIndexUp[3] = 1.0;
+  firstIntersectionIndexUp[0] = (int)ceil(firstIntersectionIndex[0]);
+  firstIntersectionIndexUp[1] = (int)ceil(firstIntersectionIndex[1]);
+  firstIntersectionIndexUp[2] = (int)ceil(firstIntersectionIndex[2]);
 
-  firstIntersectionIndexDown[0] = floor(firstIntersectionIndex[0]);
-  firstIntersectionIndexDown[1] = floor(firstIntersectionIndex[1]);
-  firstIntersectionIndexDown[2] = floor(firstIntersectionIndex[2]);
-  firstIntersectionIndexDown[3] = 1.0;
-
-  Eigen::Vector4d numeratorUp = IJKToRAS * firstIntersectionIndexUp - cameraCT;
-  Eigen::Vector4d numeratorDown = IJKToRAS * firstIntersectionIndexDown - cameraCT;
+  firstIntersectionIndexDown[0] = (int)floor(firstIntersectionIndex[0]);
+  firstIntersectionIndexDown[1] = (int)floor(firstIntersectionIndex[1]);
+  firstIntersectionIndexDown[2] = (int)floor(firstIntersectionIndex[2]);
 
   if (rayVector[0] == 0)
   {
     alphaX = 2;
-    alphaUx = 999;
   }
   else
   {
-    alphaIntersectionUp[0] = numeratorUp[0] / rayVector[0];
-    alphaIntersectionDown[0] = numeratorDown[0] / rayVector[0];
+    alphaIntersectionUp[0] = (firstIntersectionIndexUp[0] * ctSpacing[0] - cameraCT[0]) / rayVector[0];
+    alphaIntersectionDown[0] = (firstIntersectionIndexDown[0] * ctSpacing[0] - cameraCT[0]) / rayVector[0];
     alphaX = std::max(alphaIntersectionUp[0], alphaIntersectionDown[0]);
-    alphaUx = ctSpacing[0] / std::abs(rayVector[0]);
   }
 
   if (rayVector[1] == 0)
   {
     alphaY = 2;
-    alphaUy = 999;
   }
   else
   {
-    alphaIntersectionUp[1] = numeratorUp[1] / rayVector[1];
-    alphaIntersectionDown[1] = numeratorDown[1] / rayVector[1];
+    alphaIntersectionUp[1] = (firstIntersectionIndexUp[1] * ctSpacing[1] - cameraCT[1]) / rayVector[1];
+    alphaIntersectionDown[1] = (firstIntersectionIndexDown[1] * ctSpacing[1] - cameraCT[1]) / rayVector[1];
     alphaY = std::max(alphaIntersectionUp[1], alphaIntersectionDown[1]);
-    alphaUy = ctSpacing[1] / std::abs(rayVector[1]);
   }
 
   if (rayVector[2] == 0)
   {
     alphaZ = 2;
-    alphaUz = 999;
   }
   else
   {
-    alphaIntersectionUp[2] = numeratorUp[2] / rayVector[2];
-    alphaIntersectionDown[2] = numeratorDown[2] / rayVector[2];
+    alphaIntersectionUp[2] = (firstIntersectionIndexUp[2] * ctSpacing[2] - cameraCT[2]) / rayVector[2];
+    alphaIntersectionDown[2] = (firstIntersectionIndexDown[2] * ctSpacing[2] - cameraCT[2]) / rayVector[2];
     alphaZ = std::max(alphaIntersectionUp[2], alphaIntersectionDown[2]);
+  }
+
+  /* Calculate alpha incremental values when the ray intercepts with x, y, and z-planes */
+  if (rayVector[0] != 0)
+  {
+    alphaUx = ctSpacing[0] / std::abs(rayVector[0]);
+  }
+  else
+  {
+    alphaUx = 999;
+  }
+  if (rayVector[1] != 0)
+  {
+    alphaUy = ctSpacing[1] / std::abs(rayVector[1]);
+  }
+  else
+  {
+    alphaUy = 999;
+  }
+  if (rayVector[2] != 0)
+  {
     alphaUz = ctSpacing[2] / std::abs(rayVector[2]);
+  }
+  else
+  {
+    alphaUz = 999;
   }
 
   /* Calculate voxel index incremental values along the ray path. */
-  iU = pointCT(0) < cameraCT(0) ? 1 : -1;
-  jU = pointCT(1) < cameraCT(1) ? 1 : -1;
-  kU = pointCT(2) < cameraCT(2) ? 1 : -1;
+  if (cameraCT[0] < pointCT(0))
+  {
+    iU = 1;
+  }
+  else
+  {
+    iU = -1;
+  }
+  if (cameraCT[1] < pointCT(1))
+  {
+    jU = 1;
+  }
+  else
+  {
+    jU = -1;
+  }
+
+  if (cameraCT[2] < pointCT(2))
+  {
+    kU = 1;
+  }
+  else
+  {
+    kU = -1;
+  }
 
   /* Initialize the sum of the voxel intensities along the ray path to zero. */
   d12 = 0.0;
@@ -338,21 +377,21 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
     {
       /* Current ray front intercepts with x-plane. Update alphaX. */
       alphaCmin = alphaX;
-      ctIndex[0] += iU;
+      ctIndex[0] = ctIndex[0] + iU;
       alphaX = alphaX + alphaUx;
     }
     else if ((alphaY <= alphaX) && (alphaY <= alphaZ))
     {
       /* Current ray front intercepts with y-plane. Update alphaY. */
       alphaCmin = alphaY;
-      ctIndex[1] += jU;
+      ctIndex[1] = ctIndex[1] + jU;
       alphaY = alphaY + alphaUy;
     }
     else
     {
       /* Current ray front intercepts with z-plane. Update alphaZ. */
       alphaCmin = alphaZ;
-      ctIndex[2] += kU;
+      ctIndex[2] = ctIndex[2] + kU;
       alphaZ = alphaZ + alphaUz;
     }
 
