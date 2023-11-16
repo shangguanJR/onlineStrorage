@@ -4,6 +4,7 @@
 #include <thread>
 
 #include <vtkImageCast.h>
+#include <Eigen/Geometry>
 #include <Eigen/LU>
 #include <Eigen/SVD>
 
@@ -77,54 +78,18 @@ void VelRayCastInterpolator::Update()
   }
 }
 
-void VelRayCastInterpolator::Rx(double isocenter[3], double angle, Eigen::Matrix4d& out)
-{
-  double y = isocenter[1], z = isocenter[2];
-  // clang-format off
-  out <<
-    1, 0, 0, 0,
-    0, cos(angle), -sin(angle), y * (1-cos(angle)) + z * sin(angle),
-    0, sin(angle),  cos(angle), z * (1-cos(angle)) - y * sin(angle),
-    0, 0, 0, 1;
-  // clang-format on
-}
-
-void VelRayCastInterpolator::Ry(double isocenter[3], double angle, Eigen::Matrix4d& out)
-{
-  double x = isocenter[0], z = isocenter[2];
-  // clang-format off
-  out <<
-     cos(angle), 0, sin(angle),  x * (1-cos(angle)) - z * sin(angle),
-     0, 1, 0, 0,
-    -sin(angle), 0, cos(angle),  z * (1-cos(angle)) + x * sin(angle),
-     0, 0, 0, 1;
-  // clang-format on
-}
-
-void VelRayCastInterpolator::Rz(double isocenter[3], double angle, Eigen::Matrix4d& out)
-{
-  double y = isocenter[1], x = isocenter[0];
-  // clang-format off
-  out <<
-    cos(angle), -sin(angle), 0, x * (1-cos(angle)) + y * sin(angle),
-    sin(angle),  cos(angle), 0, y * (1-cos(angle)) - x * sin(angle),
-    0, 0, 1, 0, 
-    0, 0, 0, 1;
-  // clang-format on
-}
-
 void VelRayCastInterpolator::computeWorld2RAS()
 {
   // 根据旋转和平移分量计算world2RAS, 并更新相机坐标
-  Eigen::Matrix4d rx, ry, rz;
-  Eigen::Vector4d translation;
-  double center[3]{0, 0, 0};
-  Rx(center, m_Rotation[0], rx);
-  Ry(center, m_Rotation[1], ry);
-  Rz(center, m_Rotation[2], rz);
-  world2RAS = rz * ry * rx;
-  translation << m_Translation[0], m_Translation[1], m_Translation[2], 0;
-  world2RAS.col(3) += translation;
+  Eigen::AngleAxisd roll(m_Rotation[0], Eigen::Vector3d::UnitX());
+  Eigen::AngleAxisd pitch(m_Rotation[1], Eigen::Vector3d::UnitY());
+  Eigen::AngleAxisd yaw(m_Rotation[2], Eigen::Vector3d::UnitZ());
+  Eigen::Matrix3d R = (yaw * pitch * roll).toRotationMatrix();
+  Eigen::Vector3d t(m_Translation[0], m_Translation[1], m_Translation[2]);
+
+  world2RAS = Eigen::Matrix4d::Identity();
+  world2RAS.block<3, 3>(0, 0) = R;
+  world2RAS.block<3, 1>(0, 3) = t;
   cameraLPS = RAS2LPS * world2RAS * cameraWorld;
 }
 

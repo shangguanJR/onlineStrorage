@@ -19,6 +19,8 @@ void helpParameters()
   std::cerr << "       a CT image using Siddon-Jacob ray-tracing algorithm based on ProjectionMatrix. \n\n";
   std::cerr << "   where <options> is one or more of the following:\n\n";
   std::cerr << "       <-h>                     Display (this) usage information\n";
+  std::cerr << "       <-r float float float>   Rotation of WorldToRAS,[default:0,0,0]\n";
+  std::cerr << "       <-t float float float>   Translation of WorldToRAS:[default:0,0,0]\n";
   std::cerr << "       <-th float>              CT intensity threshold, below which are ignored "
                "[default: 0]\n";
   std::cerr << "       <-origin float>          Origin of the CT Volume\n";
@@ -36,6 +38,8 @@ int main(int argc, char* argv[])
   double threshold = 0.;
   int size[3]{512, 512, 1};
   double origin[3] = {0, 0, 0};
+  double rotation[3]{0, 0, 0};
+  double translation[3]{0, 0, 0};
   if (argc < 2) helpParameters();
 
   bool flag = false;
@@ -76,6 +80,38 @@ int main(int argc, char* argv[])
       argc--;
       argv++;
       origin[2] = atof(argv[1]);
+      argc--;
+      argv++;
+    }
+
+    if ((!flag) && (strcmp(argv[1], "-r") == 0))
+    {
+      flag = true;
+      argc--;
+      argv++;
+      rotation[0] = atof(argv[1]);
+      argc--;
+      argv++;
+      rotation[1] = atof(argv[1]);
+      argc--;
+      argv++;
+      rotation[2] = atof(argv[1]);
+      argc--;
+      argv++;
+    }
+
+    if ((!flag) && (strcmp(argv[1], "-t") == 0))
+    {
+      flag = true;
+      argc--;
+      argv++;
+      translation[0] = atof(argv[1]);
+      argc--;
+      argv++;
+      translation[1] = atof(argv[1]);
+      argc--;
+      argv++;
+      translation[2] = atof(argv[1]);
       argc--;
       argv++;
     }
@@ -142,8 +178,10 @@ int main(int argc, char* argv[])
   reader->GetOutput()->GetDimensions(dims);
 
   // ! 通过rx,ry,rz,tx,ty,tz来计算ras2world,即配准的目标矩阵,这样只需要优化6个参数
-  double rotation[3]{0, 0, 0};
-  double translation[3]{0, 0, 0};
+  const double dtr = 0.017453292519943295;
+  rotation[0] *= dtr;
+  rotation[1] *= dtr;
+  rotation[2] *= dtr;
   VelRayCastInterpolator interpolator;
   interpolator.SetMovingImage(reader->GetOutput(), spacing, origin);
   interpolator.SetProjectMatrix(projectionMatrix);
