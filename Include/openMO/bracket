@@ -1,0 +1,169 @@
+#pragma once
+#include <cmath>
+#include <openMO/common>
+
+namespace mo
+{
+struct BracketResult : public Result
+{
+  double xa, xb, xc, fa, fb, fc;
+  BracketResult(double _xa, double _xb, double _xc, double _fa, double _fb, double _fc, int _it,
+                int _fcalls, int64_t _t, Status _st)
+      : xa(_xa), xb(_xb), xc(_xc), fa(_fa), fb(_fb), fc(_fc), Result(0, 0, _it, _fcalls, _t, _st)
+  {
+    end = std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::system_clock::now().time_since_epoch())
+              .count();
+  }
+
+  BracketResult() : xa(0), xb(0), xc(0), fa(0), fb(0), fc(0), Result() {}
+
+  std::ostream& operator<<(std::ostream& stream) const
+  {
+    stream << "Bracket Result:\n";
+    stream << "xa: " << xa << "\n";
+    stream << "xb: " << xb << "\n";
+    stream << "xc: " << xc << "\n";
+    stream << "fa: " << fa << "\n";
+    stream << "fb: " << fb << "\n";
+    stream << "fc: " << fc << "\n";
+    stream << "fcalls: " << fcalls << "\n";
+    stream << "niters: " << niters << "\n";
+    stream << "status: " << status << "\n";
+    stream << "Time used: " << (double)(end - start) / 1000.0 << " ms\n";
+    return stream;
+  }
+};
+
+std::ostream& operator<<(std::ostream& stream, const BracketResult& res)
+{
+  res << stream;
+  return stream;
+}
+
+/**
+ * @brief Bracket the minimum of the function.
+ * reference: Numerical Recipes 3rd edition: The art of scientific computing. p490~492
+ *
+ * @tparam FuncType
+ * @param func Objective function to minimize.
+ * @param xa initial guess point
+ * @param xb initial guess point
+ * @param maxiter Maximum number of iterations to perform. Defaults to 1000.
+ */
+template <typename FuncType>
+BracketResult bracket(FuncType& func, double xa = 0.0, double xb = 1.0, int maxiter = 1000)
+{
+  int64_t begin = std::chrono::duration_cast<std::chrono::microseconds>(
+                      std::chrono::system_clock::now().time_since_epoch())
+                      .count();
+  const double gold_ratio =
+      (1.0 + std::sqrt(5.0)) / 2.0;  // default ratio by which successive intervals are magnified
+  const double grow_limit = 110.0;   // maximum magnification allowed for a parabolic-fit step
+  const double eps = 1e-21;          // used to prevent division by 0
+  double fa = func(xa);
+  double fb = func(xb);
+
+  // Make sure fa > fb so that we can search downhill
+  if (fa < fb)
+  {
+    double tmp = xb;
+    xb = xa;
+    xa = tmp;
+    tmp = fb;
+    fb = fa;
+    fa = tmp;
+  }
+
+  double xc = xb + gold_ratio * (xb - xa);  // Initial guess for c
+  double fc = func(xc);
+  int fcalls = 3;
+  int niters = 0;
+
+  // temporary variables used in while-loop
+  double tmp1, tmp2, denom, u, ulim, fu;
+  while (fb > fc)
+  {
+    // Compute u by parabolic extrapolation from xa, xb, xc
+    // f'(x) = 0 => x = b - 1/2 * (b-c)^2*((fb-fa)-(b-a)^2*(fb-fc))/((b-c)*(fb-fa)-(b-a)*(fb-fc))
+    tmp1 = (xb - xa) * (fb - fc);
+    tmp2 = (xb - xc) * (fb - fa);
+    denom = std::abs(tmp2 - tmp1) < eps ? 2.0 * eps : 2.0 * (tmp2 - tmp1);
+    u = xb - ((xb - xc) * tmp2 - (xb - xa) * tmp1) / denom;
+    ulim = xb + grow_limit * (xc - xb);
+
+    if (niters > maxiter)
+    {
+      return BracketResult(xa, xb, xc, fa, fb, fc, niters, fcalls, begin,
+                           Status::TooManyIterations);
+    }
+    niters++;
+
+    // Parabolic u is between b and c: try it
+    if ((xb - u) * (u - xc) > 0.0)
+    {
+      fu = func(u);
+      // Found a minimum between b and c.
+      if (fu < fc)
+      {
+        xa = xb;
+        xb = u;
+        fa = fb;
+        fb = fu;
+        return BracketResult(xa, xb, xc, fa, fb, fc, niters, fcalls, begin, Status::Converged);
+      }
+      // Found a minimum between a and u
+      else if (fu > fb)
+      {
+        xc = u;
+        fc = fu;
+        return BracketResult(xa, xb, xc, fa, fb, fc, niters, fcalls, begin, Status::Converged);
+      }
+      // Parabolic fit was no use. Use default magnification
+      u = xc + gold_ratio * (xc - xb);
+      fu = func(u);
+      fcalls++;
+    }
+    // Parabolic fit is between c and its allowed limit
+    else if ((xc - u) * (u - ulim) > 0.0)
+    {
+      fu = func(u);
+      fcalls++;
+      if (fu < fc)
+      {
+        xb = xc;
+        xc = u;
+        u = xc + gold_ratio * (xc - xb);
+        fb = fc;
+        fc = fu;
+        fu = func(u);
+        fcalls++;
+      }
+    }
+    // Limit parabolic u to maximum allowed value
+    else if ((u - ulim) * (ulim - xc) >= 0.0)
+    {
+      u = ulim;
+      fu = func(u);
+      fcalls++;
+    }
+    // Reject parabolic u, use default magnification
+    else
+    {
+      u = xc + gold_ratio * (xc - xb);
+      fu = func(u);
+      fcalls++;
+    }
+
+    xa = xb;
+    xb = xc;
+    xc = u;
+    fa = fb;
+    fb = fc;
+    fc = fu;
+  }
+
+  return BracketResult(xa, xb, xc, fa, fb, fc, niters, fcalls, begin, Status::Converged);
+};
+
+}  // namespace mo

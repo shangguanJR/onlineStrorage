@@ -4,6 +4,9 @@ project(VelRegistration VERSION 0.1.0 LANGUAGES C CXX)
 set(${PROJECT_NAME}_SRCS
     VelRayCastInterpolator.h
     VelRayCastInterpolator.cxx
+    VelTwoImageToOneMetric.h
+    VelTwoImageToOneMetric.cxx
+    VelRegistrationMacro.h
 )
 
 add_library(${PROJECT_NAME} SHARED
@@ -12,8 +15,8 @@ add_library(${PROJECT_NAME} SHARED
 
 target_link_libraries(${PROJECT_NAME}
     pthread
-    VTK::eigen
     VTK::CommonCore
     VTK::ImagingCore
     VTK::IOImage
+    Eigen3::Eigen
 )

@@ -1,0 +1,159 @@
+#pragma once
+
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
+#include <openMO/common>
+#include <Eigen/Core>
+
+namespace mo
+{
+
+void _line_for_search(const Eigen::VectorXd &x0, const Eigen::VectorXd &direction,
+                      const Eigen::VectorXd &lower_bound, const Eigen::VectorXd &upper_bound,
+                      double &lmin, double &lmax)
+{
+  /**
+   * @brief get nonzero indices of direction so we don't get any zero division errors.
+   * direction will not be all zero, since it is called from _linesearch_powell
+   * where we have a check for this.
+   */
+  double low, high;
+  std::vector<double> lmin_vec, lmax_vec;
+  for (size_t i = 0; i < x0.size(); i++)
+  {
+    if (std::abs(direction(i)) < std::numeric_limits<double>::epsilon()) continue;
+    low = (lower_bound(i) - x0(i)) / direction(i);
+    high = (upper_bound(i) - x0(i)) / direction(i);
+    if (direction(i) > 0)
+    {
+      lmin_vec.push_back(low);
+      lmax_vec.push_back(high);
+    }
+    else
+    {
+      lmin_vec.push_back(high);
+      lmax_vec.push_back(low);
+    }
+  }
+  lmin = *std::max_element(lmin_vec.begin(), lmin_vec.end());
+  lmax = *std::min_element(lmax_vec.begin(), lmax_vec.end());
+  if (lmax < lmin) lmin = lmax = 0;
+}
+
+template <class FuncType>
+double _minimize_scalar_bounded(FuncType &func, double lb, double ub, double xatol = 1e-5,
+                                int maxiter = 500)
+{
+  int maxfun, num;
+  double a, b, fulc, ffulc, nfc, fnfc, rat, e, x, xf, xm, fx, fu;
+  double tol1, tol2;
+  bool golden;
+
+  maxfun = maxiter;
+  const double sqrt_eps = std::sqrt(2.2e-16);
+  const double golden_mean = 0.5 * (3.0 - std::sqrt(5.0));
+  a = lb;
+  b = ub;
+  nfc = xf = fulc = a + golden_mean * (b - a);
+  rat = e = 0.0;
+  x = xf;
+  fx = func(x);
+  num = 1;
+  fu = __DBL_MAX__;
+
+  ffulc = fnfc = fx;
+  xm = 0.5 * (a + b);
+  tol1 = sqrt_eps * (std::abs(xf) + xatol / 3.0);
+  tol2 = 2.0 * tol1;
+
+  while (std::abs(xf - xm) > (tol2 - 0.5 * (b - a)))
+  {
+    golden = true;
+    // Check for parabolic fit
+    if (std::abs(e) > tol1)
+    {
+      golden = false;
+      double r = (xf - nfc) * (fx - ffulc);
+      double q = (xf - fulc) * (fx - fnfc);
+      double p = (xf - fulc) * q - (xf - nfc) * r;
+      q = 2.0 * (q - r);
+      if (q > 0.0) p = -p;
+      q = std::abs(q);
+      r = e;
+      e = rat;
+
+      // Check for acceptability of parabola
+      if ((std::abs(p) < std::abs(0.5 * q * r)) && (p > q * (a - xf)) && (p < q * (b - xf)))
+      {
+        rat = (p + 0.0) / q;
+        x = xf + rat;
+        if (((x - a) < tol2) || ((b - x) < tol2))
+        {
+          rat = xm >= xf ? tol1 : -tol1;
+        }
+      }
+      else
+      {
+        golden = true;
+      }
+    }
+
+    // do a golden-section step
+    if (golden)
+    {
+      e = xf >= xm ? a - xf : b - xf;
+      rat = golden_mean * e;
+    }
+
+    x = rat >= 0 ? xf + std::max(std::abs(rat), tol1) : xf - std::max(std::abs(rat), tol1);
+    fu = func(x);
+    num++;
+
+    if (fu <= fx)
+    {
+      if (x >= xf)
+        a = xf;
+      else
+        b = xf;
+      fulc = nfc;
+      ffulc = fnfc;
+      nfc = xf;
+      fnfc = fx;
+      xf = x;
+      fx = fu;
+    }
+    else
+    {
+      if (x < xf)
+        a = x;
+      else
+        b = x;
+      if ((fu <= fnfc) || (nfc == xf))
+      {
+        fulc = nfc;
+        ffulc = fnfc;
+        nfc = x;
+        fnfc = fu;
+      }
+      else if ((fu <= ffulc) || (fulc == xf) || (fulc == nfc))
+      {
+        fulc = x;
+        ffulc = fu;
+      }
+    }
+
+    xm = 0.5 * (a + b);
+    tol1 = sqrt_eps * std::abs(xf) + xatol / 3.0;
+    tol2 = 2.0 * tol1;
+
+    if (num >= maxfun)
+    {
+      break;
+    }
+  }
+
+  return xf;
+}
+}  // namespace mo

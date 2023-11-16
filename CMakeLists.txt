@@ -9,6 +9,8 @@ endif()
 
 find_package(VTK REQUIRED)
 find_package(Threads REQUIRED)
+find_package(Eigen3 REQUIRED)
+include_directories("Include")
 
 add_subdirectory(VelRegistration)
 

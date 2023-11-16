@@ -1,0 +1,222 @@
+#pragma once
+
+#include <openMO/common>
+#include <openMO/bounded>
+#include <openMO/brent>
+#include <Eigen/Core>
+
+namespace mo
+{
+struct PowellResult : public Result
+{
+  Eigen::VectorXd x;
+  Eigen::MatrixXd d;
+  using Parent = Result;
+
+  PowellResult(const Eigen::VectorXd& _x, const Eigen::MatrixXd& _d, double _fv, int _it,
+               int _fcalls, int64_t _t, Status _st)
+      : Result(0, _fv, _it, _fcalls, _t, _st)
+  {
+    end = std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::system_clock::now().time_since_epoch())
+              .count();
+    x.resize(_x.size());
+    d.resize(_d.rows(), _d.cols());
+    x << _x;
+    d << _d;
+  }
+
+  PowellResult() : Result()
+  {
+    end = 0;
+    start = 0;
+    x.resize(1);
+    d.resize(1, 1);
+    x << 0;
+    d << 0;
+  }
+
+  std::ostream& operator<<(std::ostream& stream) const
+  {
+    stream << "Powell's Method Result:\n";
+    stream << "Parameters: " << x.transpose() << "\n";
+    stream << "Current Direction:\n" << d << "\n";
+    stream << "Function Value: " << fval << "\n";
+    stream << "niters: " << niters << "\n";
+    stream << "fcalls: " << fcalls << "\n";
+    stream << "status: " << status << "\n";
+    stream << "Time used: " << (double)(end - start) / 1000 << " ms\n";
+  }
+};
+
+std::ostream& operator<<(std::ostream& stream, const PowellResult& res)
+{
+  res << stream;
+  return stream;
+}
+
+/**
+ * @brief For N-dimension optimization, we do a 1-D line search at each
+ * of the N direction, thus we need to wrap original function to a new functor.
+ *
+ * @tparam FuncType
+ */
+template <typename FuncType>
+struct PowellFunctor
+{
+  FuncType* func;
+  Eigen::VectorXd x, d, inputs;
+  PowellFunctor(FuncType& _func, Eigen::VectorXd& _x, Eigen::VectorXd& _d)
+  {
+    func = &_func;  // point to address of _func, make sure we are using the original func obj
+    x.resize(_x.size());
+    d.resize(_d.size());
+    x << _x;
+    d << _d;
+    inputs.resize(_x.size());
+  }
+
+  double operator()(double alpha)
+  {
+    inputs = x + alpha * d;
+    return (*func)(inputs);
+  }
+};
+
+template <class FuncType>
+class Powell
+{
+ private:
+  int size, niters, maxiter, maxfev, fcalls;
+  int index;                     // record index of which contributed msot to the new direction
+  double delta;                  // max diff of function value during 1-D line search
+  double alpha;                  // scalar determined by 1-D line search
+  double f0;                     // function value at the begin of ith iteration
+  double fi_before, fi_after;    // function value before/after line search at ith direction
+  double fnew;                   // function value at the conjugate direction
+  Eigen::VectorXd x0, xi, xnew;  // position
+  Eigen::MatrixXd direction;     // direction matrix
+  Eigen::VectorXd direct;        // ith direction
+  Eigen::VectorXd lb, ub;        // bound
+  bool isBounded = false;
+
+  double linesearch_powell(FuncType& func, Eigen::VectorXd& x, Eigen::VectorXd& d,
+                           double tol = 1e-3)
+  {
+    if (!d.any())
+    {
+      return 0.0;
+    }
+
+    PowellFunctor<FuncType> wrapFunc(func, x, d);
+    if (isBounded)
+    {
+      double lower_bound, upper_bound;
+      _line_for_search(x, d, lb, ub, lower_bound, upper_bound);
+      double xmin = _minimize_scalar_bounded<PowellFunctor<FuncType>>(wrapFunc, lower_bound,
+                                                                      upper_bound, tol / 100.0);
+      return xmin;
+    }
+    else
+    {
+      BrentResult res = brent<PowellFunctor<FuncType>>(wrapFunc, tol);
+      return res.xmin;
+    }
+  }
+
+ public:
+  explicit Powell(int _sz) : size(_sz)
+  {
+    niters = fcalls = 0;
+    maxiter = maxfev = size * 1000;
+    x0.resize(size);
+    xi.resize(size);
+    xnew.resize(size);
+    ub.resize(size);
+    lb.resize(size);
+    direction = Eigen::MatrixXd::Identity(size, size);
+    direct.resize(size);
+  }
+
+  void SetBound(Eigen::VectorXd& lower_bound, Eigen::VectorXd& upper_bound)
+  {
+    this->lb << lower_bound;
+    this->ub << upper_bound;
+    isBounded = true;
+  };
+
+  PowellResult optimize(FuncType& func, Eigen::VectorXd& x, double ftol = 1e-4, double xtol = 1e-4)
+  {
+    int64_t begin = std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::system_clock::now().time_since_epoch())
+                        .count();
+    x0 << x;
+    xi << x;
+    f0 = func(x);
+    fi_before = fi_after = f0;
+
+    while (true)
+    {
+      f0 = fi_after;
+      index = 0;
+      delta = 0.0;
+      for (int i = 0; i < size; i++)
+      {
+        direct = direction.row(i);
+        fi_before = fi_after;
+        alpha = linesearch_powell(func, xi, direct, xtol * 100);  // do 1-D optimization
+        xi = xi + alpha * direct;
+        direct = alpha * direct;
+        fi_after = func(xi);
+
+        if (fi_before - fi_after > delta)
+        {
+          delta = fi_before - fi_after;
+          index = i;
+        }
+      }
+      niters++;
+      fcalls = func.fcalls;
+
+      // check for convergence
+      if (2.0 * (f0 - fi_after) <= ftol * (std::abs(f0) + std::abs(fi_after) + 1e-20))
+        return PowellResult(xi, direction, fi_after, niters, fcalls, begin, Status::Converged);
+      if (fcalls >= maxfev)
+        return PowellResult(xi, direction, fi_after, niters, fcalls, begin,
+                            Status::TooManyFunctionCalls);
+      if (niters >= maxiter)
+        return PowellResult(xi, direction, fi_after, niters, fcalls, begin,
+                            Status::TooManyIterations);
+
+      direct = xi - x0;    // direction PN-P0
+      xnew = xi + direct;  // extrapolated point
+      x0 = xi;             // start point at next procedure
+      fnew = func(xnew);   // fE, function evaluated at extrapolated point
+
+      // if fnew >= f0, keep the old set of directions for next procedure,
+      // because the average direction is all played out
+      if (f0 > fnew)
+      {
+        // if 2(f0-2fN +fE)[(f0 - fN) - delta]^2 >= (f0 - fE)^2 delta, then kepp
+        // the old set of directions, because either (i) the decrease along the
+        // average direction was not primarily due to any single direction’s decrease,
+        // or (ii) there is a substantial second derivative along the average
+        // direction and we seem to be near to the bottom of its minimum.
+        if (2.0 * (f0 - 2.0 * fi_after + fnew) * std::pow(f0 - fi_after - delta, 2) <
+            std::pow(f0 - fnew, 2) * delta)
+        {
+          alpha = linesearch_powell(func, xi, direct, xtol * 100);
+          xi = xi + alpha * direct;
+          direct = alpha * direct;
+          fi_after = func(xi);
+          if ((direct.array() != 0).any())
+          {
+            direction.row(index) = direction.row(size - 1);
+            direction.row(size - 1) = direct;
+          }
+        }
+      }
+    }
+  }
+};
+}  // namespace mo

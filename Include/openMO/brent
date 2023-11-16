@@ -1,0 +1,174 @@
+#pragma once
+
+#include <chrono>
+#include <openMO/common>
+#include <openMO/bracket>
+namespace mo
+{
+struct BrentResult : public Result
+{
+  BrentResult(double _x, double _fv, int _it, int _fc, int64_t _t, Status _st)
+      : Result(_x, _fv, _it, _fc, _t, _st)
+  {
+    end = std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::system_clock::now().time_since_epoch())
+              .count();
+  }
+
+  BrentResult() : Result(){};
+
+  std::ostream& operator<<(std::ostream& stream) const override
+  {
+    stream << "Brent's Method Result:\n";
+    stream << "xmin: " << xmin << "\n";
+    stream << "fval: " << fval << "\n";
+    stream << "fcalls: " << fcalls << "\n";
+    stream << "niters: " << niters << "\n";
+    stream << "status: " << status << "\n";
+    stream << "Time used: " << (double)(end - start) / 1000.0 << " ms\n";
+    return stream;
+  }
+};
+
+std::ostream& operator<<(std::ostream& stream, const BrentResult& res)
+{
+  res << stream;
+  return stream;
+}
+
+/**
+ * @brief Given a function of one variable, calculate the local minimum of the
+ * function isolated to a fractional precision of tol.
+ *
+ * @tparam FuncType
+ * @param func Objective function to minimize
+ * @param tol Relative error in solution acceptable for convergence
+ * @param maxiter Maximum number of iterations in solution
+ * @return BrentResult
+ */
+template <typename FuncType>
+BrentResult brent(FuncType& func, double tol = 1.48e-8, int maxiter = 500)
+{
+  auto begin = std::chrono::duration_cast<std::chrono::microseconds>(
+                   std::chrono::system_clock::now().time_since_epoch())
+                   .count();
+  const double gold_ratio = 0.3819660;
+  const double eps = 1.0e-11;
+  double xa, xb, xc;
+  int fcalls, niters = 0;
+  // xc <= xb <= xa and fc >= fb <= fa
+  BracketResult res = bracket<FuncType>(func);
+  xa = res.xa;
+  xb = res.xb;
+  xc = res.xc;
+  fcalls = res.fcalls;
+
+  // minimum is bracketed between a and b
+  // x is the point with the very least function value found so far
+  // w is the point with the second least function value
+  // v is the previous value of w
+  // u is the point at which the function was evaluated most recently
+  // xmid is the midpoint between a and b
+  double a, b, x, w, v, fx, fw, fv, u, fu, xmid;
+  a = xa > xc ? xc : xa;
+  b = xa > xc ? xa : xc;
+  x = w = v = xb;
+  fw = fv = fx = func(x);
+  fcalls++;
+
+  double delta = 0.0;  // distance moved on the step before last
+  double tol1, tol2, delta_temp, p, q, r, d = 0.0;
+  while (niters < maxiter)
+  {
+    tol1 = tol * std::abs(x) + eps;
+    tol2 = 2.0 * tol1;
+    xmid = 0.5 * (a + b);
+
+    // check convergence
+    if (std::abs(x - xmid) <= (tol2 - 0.5 * (b - a)))
+      return BrentResult(x, fx, niters, fcalls, begin, Status::Converged);
+
+    // Try a parabolic fit
+    if (std::abs(delta) > tol1)
+    {
+      r = (x - w) * (fx - fv);
+      q = (x - v) * (fx - fw);
+      p = (x - v) * q - (x - w) * r;
+      q = 2.0 * (q - r);
+      if (q > 0.0) p = -p;
+      q = std::abs(q);
+      delta_temp = delta;
+      delta = d;
+
+      // check parabolic fit
+      if (p > q * (a - x) && p < q * (b - x) && std::abs(p) < std::abs(0.5 * q * delta_temp))
+      {
+        d = p / q;
+        u = x + d;
+        if (u - a < tol2 || b - u < tol2) d = xmid - x >= 0 ? tol1 : -tol1;
+      }
+      // do golden section
+      else
+      {
+        delta = x >= xmid ? a - x : b - x;  // choose the larger direction
+        d = gold_ratio * delta;
+      }
+    }
+    // do golden section
+    else
+    {
+      delta = x >= xmid ? a - x : b - x;
+      d = gold_ratio * delta;
+    }
+
+    // update by at least tol1
+    if (std::abs(d) >= tol1)
+    {
+      u = x + d;
+    }
+    else
+    {
+      u = d >= 0 ? x + tol1 : x - tol1;
+    }
+
+    fu = func(u);
+    fcalls++;
+
+    // if it's bigger than current
+    if (fu > fx)
+    {
+      if (u < x)
+        a = u;
+      else
+        b = u;
+      if (fu <= fw || w == x)
+      {
+        v = w;
+        w = u;
+        fv = fw;
+        fw = fu;
+      }
+      else if (fu <= fv || v == x || v == w)
+      {
+        v = u;
+        fv = fu;
+      }
+    }
+    else
+    {
+      if (u >= x)
+        a = x;
+      else
+        b = x;
+      v = w;
+      w = x;
+      x = u;
+      fv = fw;
+      fw = fx;
+      fx = fu;
+    }
+    niters++;
+  }
+  return BrentResult(x, fx, niters, fcalls, begin, Status::Converged);
+}
+}  // namespace mo

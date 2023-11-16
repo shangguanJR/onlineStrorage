@@ -12,3 +12,11 @@ add_executable(testDRR
 target_link_libraries(testDRR
     VelRegistration
 )
+
+add_executable(testRegistration
+    testRegistration.cxx
+)
+
+target_link_libraries(testRegistration
+    VelRegistration
+)

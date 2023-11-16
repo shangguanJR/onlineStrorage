@@ -1,0 +1,59 @@
+#pragma once
+#include <chrono>
+#include <iostream>
+#include <vector>
+
+namespace mo
+{
+enum Status
+{
+  TooManyFunctionCalls = -3,
+  TooManyIterations,
+  NotStarted,
+  Running,
+  Converged
+};
+
+struct Result
+{
+  double xmin, fval;
+  int64_t start, end;
+  int niters, fcalls;
+  Status status;
+
+  Result(double _x, double _fv, int _it, int _fcalls, int64_t _t, Status _st)
+      : niters(_it), fcalls(_fcalls), xmin(_x), fval(_fv), start(_t), status(_st)
+  {
+    end = std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::system_clock::now().time_since_epoch())
+              .count();
+  }
+
+  Result() : xmin(0), fval(0), niters(0), fcalls(0), start(0), end(0), status(Status::NotStarted) {}
+
+  virtual std::ostream& operator<<(std::ostream& stream) const
+  {
+    stream << "xmin: " << xmin << "\n";
+    stream << "fval: " << fval << "\n";
+    stream << "fcalls: " << fcalls << "\n";
+    stream << "niters: " << niters << "\n";
+    stream << "status: " << status << "\n";
+    stream << "Time used: " << (double)(end - start) / 1000.0 << " ms\n";
+    return stream;
+  }
+};
+
+struct Exception
+{
+  std::string message;
+  explicit Exception(const char* _msg) : message(_msg) {}
+};
+
+struct Function
+{
+  int fcalls = 0;
+  virtual double operator()(const std::vector<double>& x){};
+  virtual double operator()(double x){};
+};
+
+}  // namespace mo

@@ -4,37 +4,8 @@
 #include <thread>
 
 #include <vtkImageCast.h>
-#include <vtkeigen/eigen/LU>
-#include <vtkeigen/eigen/SVD>
-
-VelRayCastInterpolator::VelRayCastInterpolator() {}
-
-void VelRayCastInterpolator::SetBlockSize(int size)
-{
-  this->blockSize = size;
-}
-
-void VelRayCastInterpolator::SetSize(int size[3])
-{
-  memcpy(this->drrSize, size, 3 * sizeof(double));
-}
-
-void VelRayCastInterpolator::SetThreshold(double threshold)
-{
-  this->threshold = threshold;
-}
-
-void VelRayCastInterpolator::SetCT2World(const Eigen::Matrix4d& matrix)
-{
-  this->ct2world = matrix;
-  this->world2cT = this->ct2world.inverse();
-}
-
-void VelRayCastInterpolator::SetRASToIJKMatrix(const Eigen::Matrix4d& matrix)
-{
-  this->RASToIJK = matrix;
-  this->IJKToRAS = this->RASToIJK.inverse();
-}
+#include <Eigen/LU>
+#include <Eigen/SVD>
 
 void VelRayCastInterpolator::SetProjectMatrix(const Eigen::MatrixXd& matrix)
 {
@@ -46,19 +17,26 @@ void VelRayCastInterpolator::SetProjectMatrix(const Eigen::MatrixXd& matrix)
   this->cameraWorld << -R.inverse() * t, 1;  // P = KR[I|-C] = K[R|t], t = -RC, C = - R^-1 @ t
 }
 
-void VelRayCastInterpolator::SetMovingImage(vtkImageData* image, double spacing[3], double bounds[6])
+void VelRayCastInterpolator::SetMovingImage(vtkImageData* image, double spacing[3], double origin[3])
 {
   image->GetDimensions(ctSize);
   ctPointer = static_cast<short*>(image->GetScalarPointer());
-  memcpy(ctBounds, bounds, 6 * sizeof(double));
   memcpy(ctSpacing, spacing, 3 * sizeof(double));
+
+  // clang-format off
+  RAS2LPS <<
+    -1, 0, 0, origin[0],
+    0, -1, 0, origin[1],
+    0,  0, 1,-origin[2],
+    0,  0, 0,         1;
+  // clang-format on
 }
 
 vtkSmartPointer<vtkImageData> VelRayCastInterpolator::GetOutput()
 {
   double range[2];
   drrImage->GetScalarRange(range);
-  size_t size = drrSize[0] * drrSize[1] * drrSize[2];
+  size_t size = m_DRRSize[0] * m_DRRSize[1] * m_DRRSize[2];
   for (size_t i = 0; i < size; i++)
   {
     drrPointer[i] = static_cast<short>(255.0 * (static_cast<double>(drrPointer[i]) - range[0]) / (range[1] - range[0]));
@@ -70,19 +48,23 @@ vtkSmartPointer<vtkImageData> VelRayCastInterpolator::GetOutput()
   return castFilter->GetOutput();
 }
 
+Eigen::Matrix4d VelRayCastInterpolator::GetWorld2RAS() const
+{
+  return this->world2RAS;
+}
+
 void VelRayCastInterpolator::Update()
 {
   // 第一次计算时, 设置一些初始参数, 避免重复计算
   if (!drrImage) this->initialize();
 
-  // 优化算法迭代时会更新world2ct,因此相机坐标也要更新
-  this->cameraCT = this->world2cT * cameraWorld;
+  this->computeWorld2RAS();
 
   std::vector<std::thread> pool;
   for (int i = 0; i < row; i++)
     for (int j = 0; j < col; j++)
     {
-      int extent[4] = {i * blockSize, (i + 1) * blockSize, j * blockSize, (j + 1) * blockSize};
+      int extent[4] = {i * m_BlockSize, (i + 1) * m_BlockSize, j * m_BlockSize, (j + 1) * m_BlockSize};
       // this->process(extent[0], extent[1], extent[2], extent[3]);
       // 线程在std::thread()构造函数完成后就开始执行了
       pool.push_back(std::thread(&VelRayCastInterpolator::process, this, extent[0], extent[1], extent[2], extent[3]));
@@ -93,6 +75,57 @@ void VelRayCastInterpolator::Update()
   {
     pool[i].join();
   }
+}
+
+void VelRayCastInterpolator::Rx(double isocenter[3], double angle, Eigen::Matrix4d& out)
+{
+  double y = isocenter[1], z = isocenter[2];
+  // clang-format off
+  out <<
+    1, 0, 0, 0,
+    0, cos(angle), -sin(angle), y * (1-cos(angle)) + z * sin(angle),
+    0, sin(angle),  cos(angle), z * (1-cos(angle)) - y * sin(angle),
+    0, 0, 0, 1;
+  // clang-format on
+}
+
+void VelRayCastInterpolator::Ry(double isocenter[3], double angle, Eigen::Matrix4d& out)
+{
+  double x = isocenter[0], z = isocenter[2];
+  // clang-format off
+  out <<
+     cos(angle), 0, sin(angle),  x * (1-cos(angle)) - z * sin(angle),
+     0, 1, 0, 0,
+    -sin(angle), 0, cos(angle),  z * (1-cos(angle)) + x * sin(angle),
+     0, 0, 0, 1;
+  // clang-format on
+}
+
+void VelRayCastInterpolator::Rz(double isocenter[3], double angle, Eigen::Matrix4d& out)
+{
+  double y = isocenter[1], x = isocenter[0];
+  // clang-format off
+  out <<
+    cos(angle), -sin(angle), 0, x * (1-cos(angle)) + y * sin(angle),
+    sin(angle),  cos(angle), 0, y * (1-cos(angle)) - x * sin(angle),
+    0, 0, 1, 0, 
+    0, 0, 0, 1;
+  // clang-format on
+}
+
+void VelRayCastInterpolator::computeWorld2RAS()
+{
+  // 根据旋转和平移分量计算world2RAS, 并更新相机坐标
+  Eigen::Matrix4d rx, ry, rz;
+  Eigen::Vector4d translation;
+  double center[3]{0, 0, 0};
+  Rx(center, m_Rotation[0], rx);
+  Ry(center, m_Rotation[1], ry);
+  Rz(center, m_Rotation[2], rz);
+  world2RAS = rz * ry * rx;
+  translation << m_Translation[0], m_Translation[1], m_Translation[2], 0;
+  world2RAS.col(3) += translation;
+  cameraLPS = RAS2LPS * world2RAS * cameraWorld;
 }
 
 void VelRayCastInterpolator::decomposeProjectionMatrix(const Eigen::MatrixXd& P, Eigen::Matrix3d& K, Eigen::Matrix3d& R,
@@ -156,12 +189,12 @@ void VelRayCastInterpolator::decomposeProjectionMatrix(const Eigen::MatrixXd& P,
 void VelRayCastInterpolator::initialize()
 {
   drrImage = vtkSmartPointer<vtkImageData>::New();
-  drrImage->SetDimensions(drrSize);
+  drrImage->SetDimensions(m_DRRSize);
   drrImage->AllocateScalars(VTK_SHORT, 1);
   drrPointer = static_cast<short*>(drrImage->GetScalarPointer());
 
-  row = drrSize[0] / blockSize;
-  col = drrSize[1] / blockSize;
+  row = m_DRRSize[0] / m_BlockSize;
+  col = m_DRRSize[1] / m_BlockSize;
 }
 
 void VelRayCastInterpolator::process(int imin, int imax, int jmin, int jmax)
@@ -171,7 +204,7 @@ void VelRayCastInterpolator::process(int imin, int imax, int jmin, int jmax)
     for (int i = imin; i < imax; i++)
     {
       point << i, j, 1;
-      drrPointer[i + drrSize[0] * j] = this->evaluate(point);
+      drrPointer[i + m_DRRSize[0] * j] = this->evaluate(point);
     }
 }
 
@@ -199,19 +232,19 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   // 计算经过该点的光线
   Eigen::Vector4d pointWorld = projectMatrixInv * point;
   pointWorld /= pointWorld[3];
-  Eigen::Vector4d pointCT = world2cT * pointWorld;
+  Eigen::Vector4d pointLPS = RAS2LPS * world2RAS * pointWorld;
   float rayVector[3];
-  rayVector[0] = static_cast<float>(pointCT[0] - cameraCT[0]);
-  rayVector[1] = static_cast<float>(pointCT[1] - cameraCT[1]);
-  rayVector[2] = static_cast<float>(pointCT[2] - cameraCT[2]);
+  rayVector[0] = static_cast<float>(pointLPS[0] - cameraLPS[0]);
+  rayVector[1] = static_cast<float>(pointLPS[1] - cameraLPS[1]);
+  rayVector[2] = static_cast<float>(pointLPS[2] - cameraLPS[2]);
 
   /* Calculate the parametric  values of the first  and  the  last
   intersection points of  the  ray  with the X,  Y, and Z-planes  that
   define  the  CT volume. */
   if (rayVector[0] != 0)
   {
-    alphaX1 = (0.0 - cameraCT[0]) / rayVector[0];
-    alphaXN = (ctSize[0] * ctSpacing[0] - cameraCT[0]) / rayVector[0];
+    alphaX1 = (0.0 - cameraLPS[0]) / rayVector[0];
+    alphaXN = (ctSize[0] * ctSpacing[0] - cameraLPS[0]) / rayVector[0];
     alphaXmin = std::min(alphaX1, alphaXN);
     alphaXmax = std::max(alphaX1, alphaXN);
   }
@@ -222,8 +255,8 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   }
   if (rayVector[1] != 0)
   {
-    alphaY1 = (0 - cameraCT[1]) / rayVector[1];
-    alphaYN = (ctSize[1] * ctSpacing[1] - cameraCT[1]) / rayVector[1];
+    alphaY1 = (0 - cameraLPS[1]) / rayVector[1];
+    alphaYN = (ctSize[1] * ctSpacing[1] - cameraLPS[1]) / rayVector[1];
     alphaYmin = std::min(alphaY1, alphaYN);
     alphaYmax = std::max(alphaY1, alphaYN);
   }
@@ -234,8 +267,8 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   }
   if (rayVector[2] != 0)
   {
-    alphaZ1 = (0 - cameraCT[2]) / rayVector[2];
-    alphaZN = (ctSize[2] * ctSpacing[2] - cameraCT[2]) / rayVector[2];
+    alphaZ1 = (0 - cameraLPS[2]) / rayVector[2];
+    alphaZN = (ctSize[2] * ctSpacing[2] - cameraLPS[2]) / rayVector[2];
     alphaZmin = std::min(alphaZ1, alphaZN);
     alphaZmax = std::max(alphaZ1, alphaZN);
   }
@@ -253,9 +286,9 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   /* Calculate the parametric values of the first intersection point
   of the ray with the X, Y, and Z-planes after the ray entered the
   CT volume. */
-  firstIntersection[0] = cameraCT[0] + alphaMin * rayVector[0];  // RAS坐标系下
-  firstIntersection[1] = cameraCT[1] + alphaMin * rayVector[1];  // RAS坐标系下
-  firstIntersection[2] = cameraCT[2] + alphaMin * rayVector[2];  // RAS坐标系下
+  firstIntersection[0] = cameraLPS[0] + alphaMin * rayVector[0];  // RAS坐标系下
+  firstIntersection[1] = cameraLPS[1] + alphaMin * rayVector[1];  // RAS坐标系下
+  firstIntersection[2] = cameraLPS[2] + alphaMin * rayVector[2];  // RAS坐标系下
 
   /* Transform LPS coordinate to the continuous index of the CT volume*/
   firstIntersectionIndex[0] = firstIntersection[0] / ctSpacing[0];
@@ -276,8 +309,8 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   }
   else
   {
-    alphaIntersectionUp[0] = (firstIntersectionIndexUp[0] * ctSpacing[0] - cameraCT[0]) / rayVector[0];
-    alphaIntersectionDown[0] = (firstIntersectionIndexDown[0] * ctSpacing[0] - cameraCT[0]) / rayVector[0];
+    alphaIntersectionUp[0] = (firstIntersectionIndexUp[0] * ctSpacing[0] - cameraLPS[0]) / rayVector[0];
+    alphaIntersectionDown[0] = (firstIntersectionIndexDown[0] * ctSpacing[0] - cameraLPS[0]) / rayVector[0];
     alphaX = std::max(alphaIntersectionUp[0], alphaIntersectionDown[0]);
   }
 
@@ -287,8 +320,8 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   }
   else
   {
-    alphaIntersectionUp[1] = (firstIntersectionIndexUp[1] * ctSpacing[1] - cameraCT[1]) / rayVector[1];
-    alphaIntersectionDown[1] = (firstIntersectionIndexDown[1] * ctSpacing[1] - cameraCT[1]) / rayVector[1];
+    alphaIntersectionUp[1] = (firstIntersectionIndexUp[1] * ctSpacing[1] - cameraLPS[1]) / rayVector[1];
+    alphaIntersectionDown[1] = (firstIntersectionIndexDown[1] * ctSpacing[1] - cameraLPS[1]) / rayVector[1];
     alphaY = std::max(alphaIntersectionUp[1], alphaIntersectionDown[1]);
   }
 
@@ -298,8 +331,8 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   }
   else
   {
-    alphaIntersectionUp[2] = (firstIntersectionIndexUp[2] * ctSpacing[2] - cameraCT[2]) / rayVector[2];
-    alphaIntersectionDown[2] = (firstIntersectionIndexDown[2] * ctSpacing[2] - cameraCT[2]) / rayVector[2];
+    alphaIntersectionUp[2] = (firstIntersectionIndexUp[2] * ctSpacing[2] - cameraLPS[2]) / rayVector[2];
+    alphaIntersectionDown[2] = (firstIntersectionIndexDown[2] * ctSpacing[2] - cameraLPS[2]) / rayVector[2];
     alphaZ = std::max(alphaIntersectionUp[2], alphaIntersectionDown[2]);
   }
 
@@ -330,7 +363,7 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   }
 
   /* Calculate voxel index incremental values along the ray path. */
-  if (cameraCT[0] < pointCT(0))
+  if (cameraLPS[0] < pointLPS(0))
   {
     iU = 1;
   }
@@ -338,7 +371,7 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   {
     iU = -1;
   }
-  if (cameraCT[1] < pointCT(1))
+  if (cameraLPS[1] < pointLPS(1))
   {
     jU = 1;
   }
@@ -347,7 +380,7 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
     jU = -1;
   }
 
-  if (cameraCT[2] < pointCT(2))
+  if (cameraLPS[2] < pointLPS(2))
   {
     kU = 1;
   }
@@ -401,10 +434,10 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
     {
       size_t index = ctIndex[0] + ctIndex[1] * ctSize[1] + ctIndex[2] * ctSize[0] * ctSize[1];
       value = static_cast<double>(ctPointer[index]);
-      /* Ignore voxels whose intensities are below the threshold. */
-      if (value > threshold)
+      /* Ignore voxels whose intensities are below the m_Threshold. */
+      if (value > m_Threshold)
       {
-        d12 += (alphaCmin - alphaCminPrev) * (value - threshold);
+        d12 += (alphaCmin - alphaCminPrev) * (value - m_Threshold);
       }
     }
   }
