@@ -206,7 +206,7 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   /* Calculate the parametric  values of the first  and  the  last
   intersection points of  the  ray  with the X,  Y, and Z-planes  that
   define  the  CT volume. */
-  if (rayVector[0] != 0)
+  if (std::abs(rayVector[0]) > 1e-3)
   {
     alphaX1 = (0.0 - cameraLPS[0]) / rayVector[0];
     alphaXN = (ctSize[0] * ctSpacing[0] - cameraLPS[0]) / rayVector[0];
@@ -218,7 +218,7 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
     alphaXmin = -2;
     alphaXmax = 2;
   }
-  if (rayVector[1] != 0)
+  if (std::abs(rayVector[1]) > 1e-3)
   {
     alphaY1 = (0 - cameraLPS[1]) / rayVector[1];
     alphaYN = (ctSize[1] * ctSpacing[1] - cameraLPS[1]) / rayVector[1];
@@ -230,7 +230,7 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
     alphaYmin = -2;
     alphaYmax = 2;
   }
-  if (rayVector[2] != 0)
+  if (std::abs(rayVector[2]) > 1e-3)
   {
     alphaZ1 = (0 - cameraLPS[2]) / rayVector[2];
     alphaZN = (ctSize[2] * ctSpacing[2] - cameraLPS[2]) / rayVector[2];
@@ -268,7 +268,7 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   firstIntersectionIndexDown[1] = (int)floor(firstIntersectionIndex[1]);
   firstIntersectionIndexDown[2] = (int)floor(firstIntersectionIndex[2]);
 
-  if (rayVector[0] == 0)
+  if (std::abs(rayVector[0]) < 1e-3)
   {
     alphaX = 2;
   }
@@ -279,7 +279,7 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
     alphaX = std::max(alphaIntersectionUp[0], alphaIntersectionDown[0]);
   }
 
-  if (rayVector[1] == 0)
+  if (std::abs(rayVector[1]) < 1e-3)
   {
     alphaY = 2;
   }
@@ -290,7 +290,7 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
     alphaY = std::max(alphaIntersectionUp[1], alphaIntersectionDown[1]);
   }
 
-  if (rayVector[2] == 0)
+  if (std::abs(rayVector[2]) < 1e-3)
   {
     alphaZ = 2;
   }
@@ -302,7 +302,7 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   }
 
   /* Calculate alpha incremental values when the ray intercepts with x, y, and z-planes */
-  if (rayVector[0] != 0)
+  if (std::abs(rayVector[0]) > 1e-3)
   {
     alphaUx = ctSpacing[0] / std::abs(rayVector[0]);
   }
@@ -310,7 +310,7 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   {
     alphaUx = 999;
   }
-  if (rayVector[1] != 0)
+  if (std::abs(rayVector[1]) > 1e-3)
   {
     alphaUy = ctSpacing[1] / std::abs(rayVector[1]);
   }
@@ -318,7 +318,7 @@ short VelRayCastInterpolator::evaluate(const Eigen::Vector3d& point)
   {
     alphaUy = 999;
   }
-  if (rayVector[2] != 0)
+  if (std::abs(rayVector[2]) > 1e-3)
   {
     alphaUz = ctSpacing[2] / std::abs(rayVector[2]);
   }

@@ -17,12 +17,12 @@ void VelTwoImageToOneMetric::Update()
   imageIndices2.clear();
   imagePoints1.clear();
   imagePoints2.clear();
-  
+
   int dims[3];
   m_FixedImage1->GetDimensions(dims);
   for (int j = 0; j < dims[1]; j++)
   {
-    for (int i = 0; i < dims[0]; j++)
+    for (int i = 0; i < dims[0]; i++)
     {
       int index = i + j * dims[0];
       if (fixedMaskPtr1[index])
@@ -54,9 +54,9 @@ double VelTwoImageToOneMetric::operator()(Eigen::VectorXd& x)
   m_Interpolator1->SetTranslation(t);
   m_Interpolator1->computeWorld2RAS();
 
-  m_Interpolator1->SetRotation(r);
-  m_Interpolator1->SetTranslation(t);
-  m_Interpolator1->computeWorld2RAS();
+  m_Interpolator2->SetRotation(r);
+  m_Interpolator2->SetTranslation(t);
+  m_Interpolator2->computeWorld2RAS();
 
   sff1 = smm1 = sfm1 = sf1 = sm1 = 0;
   sff2 = smm2 = sfm2 = sf2 = sm2 = 0;
@@ -77,6 +77,11 @@ double VelTwoImageToOneMetric::operator()(Eigen::VectorXd& x)
   if (imageIndices2.size() % m_BlockSize != 0)
   {
     pool.push_back(std::thread(&VelTwoImageToOneMetric::process2, this, numBlock2 * m_BlockSize, imageIndices2.size()));
+  }
+
+  for (size_t i = 0; i < pool.size(); i++)
+  {
+    pool[i].join();
   }
 
   double sff, smm, sfm;

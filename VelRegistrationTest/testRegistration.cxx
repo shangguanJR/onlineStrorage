@@ -194,17 +194,17 @@ int main(int argc, char* argv[])
 
   xray1->GetDimensions(drrSize);
 
-  vtkSmartPointer<vtkImageData> mask1, mask2;
+  vtkSmartPointer<vtkImageData> mask1 = vtkSmartPointer<vtkImageData>::New();
+  vtkSmartPointer<vtkImageData> mask2 = vtkSmartPointer<vtkImageData>::New();
   if (mask1FileName)
   {
     vtkNew<vtkNIFTIImageReader> reader;
     reader->SetFileName(mask1FileName);
     reader->Update();
-    mask1 = reader->GetOutput();
+    mask1->DeepCopy(reader->GetOutput());
   }
   else
   {
-    mask1 = vtkSmartPointer<vtkImageData>::New();
     mask1->SetDimensions(drrSize);
     mask1->AllocateScalars(VTK_UNSIGNED_CHAR, 1);
     uint8_t* ptr = static_cast<uint8_t*>(mask1->GetScalarPointer());
@@ -218,11 +218,10 @@ int main(int argc, char* argv[])
     vtkNew<vtkNIFTIImageReader> reader;
     reader->SetFileName(mask2FileName);
     reader->Update();
-    mask2 = reader->GetOutput();
+    mask2->DeepCopy(reader->GetOutput());
   }
   else
   {
-    mask2 = vtkSmartPointer<vtkImageData>::New();
     mask2->SetDimensions(drrSize);
     mask2->AllocateScalars(VTK_UNSIGNED_CHAR, 1);
     uint8_t* ptr = static_cast<uint8_t*>(mask2->GetScalarPointer());
@@ -232,8 +231,17 @@ int main(int argc, char* argv[])
     }
   }
 
-  // TODO 两个角度的投影矩阵
-  Eigen::Matrix4d P1, P2;
+  Eigen::MatrixXd P1(3, 4), P2(3, 4);
+  // clang-format off
+  P1 << 
+       -1.94081,  -0.00175222,    -0.463268,     -280.918,
+      -0.389189,      1.21037,      1.54015,      136.969,
+    9.07861e-06,  0.000351396, -0.000218738,    -0.308595;
+  P2 <<
+         0.1202,    0.909787,   -0.523116,    -69.5134,
+       0.289363,   -0.526752,   -0.868546,    -93.4858,
+    0.000205826, 1.57749e-05,  3.4557e-05,    0.135328;
+  // clang-format on
 
   VelRayCastInterpolator interpolator1;
   VelRayCastInterpolator interpolator2;
@@ -244,7 +252,7 @@ int main(int argc, char* argv[])
 
   interpolator2.SetDRRSize(drrSize);
   interpolator2.SetMovingImage(ct, spacing, origin);
-  interpolator2.SetProjectMatrix(P1);
+  interpolator2.SetProjectMatrix(P2);
   interpolator2.SetThreshold(threshold);
 
   VelTwoImageToOneMetric metric;
